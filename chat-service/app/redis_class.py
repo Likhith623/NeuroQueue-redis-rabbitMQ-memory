@@ -4,6 +4,9 @@ from datetime import datetime, timezone
 import json
 from dotenv import load_dotenv
 import os
+from MM2.memory_functions import normalize_memory_fields
+from MM2.bot_prompt import get_bot_prompt
+from MM2.memory_functions import normalize_memory_fields, clean_mem_id
 
 load_dotenv()
 #docker exec -it redis-stack redis-cli
@@ -13,7 +16,6 @@ class RedisManager:
         host = host or os.environ.get('REDIS_HOST', 'localhost')
         port = port or int(os.environ.get('REDIS_PORT', 6379))
         db = db or int(os.environ.get('REDIS_DB', 0))
-        self.client = redis.Redis(host=host, port=port, db=db)
         self.client = redis.Redis(host=host, port=port, db=db)
 
     def store_memory(self, user_id, mem_id, memory_dict):
@@ -32,17 +34,31 @@ class RedisManager:
                 mapping[k] = str(v) if not isinstance(v, str) else v
         self.client.hset(key, mapping=mapping)
 
+
+
+
+
+
+
+
     def store_chat(self, user_id, chat_id, chat_dict):
         key = f"chat:{user_id}:{chat_id}"
+        print(f"[DEBUG] store_chat key={key} mapping={chat_dict}")
         self.client.hset(key, mapping=chat_dict)
-
+    
     def load_user_data(self, user_id, memories, chats):
+        now = str(datetime.now(timezone.utc).timestamp())
         for mem in memories:
-            mem_id = mem['id']
-            self.store_memory(user_id, mem_id, mem)
+            mem_id = clean_mem_id(mem['id'])  # <-- FIX: always clean mem_id
+            self.store_memory(user_id, mem_id, normalize_memory_fields(mem))
+            key = f"memories:{user_id}:{mem_id}"
+            self.client.hset(key, "__reindex", now)
         for chat in chats:
             chat_id = chat['id']
             self.store_chat(user_id, chat_id, chat)
+            key = f"chat:{user_id}:{chat_id}"
+            # Always update __reindex with a unique value
+            self.client.hset(key, "__reindex", now)
     
     def get_user_memories(self, user_id):
         pattern = f"memories:{user_id}:*"
@@ -83,8 +99,24 @@ class RedisManager:
         decoded_keys = [key.decode('utf-8') for key in total_keys]
         if decoded_keys:
           self.client.delete(*decoded_keys)
-        return len(total_keys) 
-          
-            
-
+        return len(total_keys)
     
+    def has_user_data(self, user_id: str) -> bool:
+        # Check if any memories or chats exist for this user_id in Redis
+        mem_keys = list(self.client.scan_iter(f"memories:{user_id}:*"))
+        chat_keys = list(self.client.scan_iter(f"chat:{user_id}:*"))
+        return bool(mem_keys or chat_keys)
+
+    def load_user_data(self, user_id, memories, chats):
+        now = str(datetime.now(timezone.utc).timestamp())
+        for mem in memories:
+            mem_id = clean_mem_id(mem['id'])  # <-- FIX: always clean mem_id
+            self.store_memory(user_id, mem_id, normalize_memory_fields(mem))
+            key = f"memories:{user_id}:{mem_id}"
+            self.client.hset(key, "__reindex", now)
+        for chat in chats:
+            chat_id = chat['id']
+            self.store_chat(user_id, chat_id, chat)
+            key = f"chat:{user_id}:{chat_id}"
+            # Always update __reindex with a unique value
+            self.client.hset(key, "__reindex", now)
