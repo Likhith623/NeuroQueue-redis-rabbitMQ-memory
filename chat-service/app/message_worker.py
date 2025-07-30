@@ -4,7 +4,7 @@ import asyncio
 import aio_pika
 import requests
 from dotenv import load_dotenv
-
+from MM2.bot_prompt import get_bot_prompt
 load_dotenv()
 
 RABBIT_URL = os.getenv("RABBITMQ_URL")
@@ -13,21 +13,37 @@ RABBITMQ_API_USER = os.getenv("RABBITMQ_API_USER", "guest")
 RABBITMQ_API_PASS = os.getenv("RABBITMQ_API_PASS", "guest")
 POLL_INTERVAL_SEC = 20 # Poll RabbitMQ API every 20 seconds
 
-from .memory_functions import log_message
-from .redis_class import RedisManager
+from MM2.memory_functions import log_message
+from MM2.redis_class import RedisManager
 redis_manager = RedisManager()
 
 def is_message_log_queue(queue_name):
     return queue_name.startswith("message_logs_user_")
 
+
 async def on_message_log(redis_manager, msg: aio_pika.IncomingMessage):
     async with msg.process():
         try:
             data = json.loads(msg.body)
-            await log_message(redis_manager, data["user_id"], data["user_message"], data["bot_response"])
+            # Extract email and bot_id from user_id if not present
+            email, bot_id = "", ""
+            if "email" in data and "bot_id" in data:
+                email = data["email"]
+                bot_id = data["bot_id"]
+            elif "user_id" in data and ":" in data["user_id"]:
+                email, bot_id = data["user_id"].split(":", 1)
+            await log_message(
+                redis_manager,
+                data["user_id"],
+                data["user_message"],
+                data["bot_response"],
+                email=email,
+                bot_id=bot_id
+            )
             print(f"[MessageWorker] Logged message for user {data['user_id']}")
         except Exception as e:
             print(f"[MessageWorker] Error: {e}")
+
 
 async def monitor_and_consume_queues():
     print("Connecting to RabbitMQ...")
