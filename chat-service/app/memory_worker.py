@@ -5,7 +5,7 @@ import aio_pika
 import requests
 import time
 from dotenv import load_dotenv
-
+from MM2.bot_prompt import get_bot_prompt
 load_dotenv()
 RABBIT_URL = os.getenv("RABBITMQ_URL")
 RABBITMQ_API_URL = os.getenv("RABBITMQ_API_URL", "http://localhost:15672/api/queues")
@@ -13,8 +13,8 @@ RABBITMQ_API_USER = os.getenv("RABBITMQ_API_USER", "guest")
 RABBITMQ_API_PASS = os.getenv("RABBITMQ_API_PASS", "guest")
 POLL_INTERVAL_SEC = 20  # Check for new queues every 20 seconds
 
-from .memory_functions import generate_candidate_memories, update_user_memory
-from .redis_class import RedisManager
+from MM2.memory_functions import generate_candidate_memories, update_user_memory
+from MM2.redis_class import RedisManager
 redis_manager = RedisManager()
 
 def is_memory_queue(queue_name):
@@ -27,11 +27,11 @@ async def on_memory_task(redis_manager, msg: aio_pika.IncomingMessage):
             user_id = data.get("user_id")
             user_msg = data.get("user_message", "")
             bot_resp = data.get("bot_response", "")
+            bot_id = data.get("bot_id")
 
-            if not user_id or not user_msg or not bot_resp:
+            if not user_id or not user_msg or not bot_resp or not bot_id:
                 print(f"[MemoryWorker] Skipping: missing required fields in message: {data}")
                 return
-
             start_time = time.perf_counter()
             print(f"\n[MemoryWorker] Processing for userID: {user_id}")
 
@@ -50,7 +50,7 @@ async def on_memory_task(redis_manager, msg: aio_pika.IncomingMessage):
                 for i, cand in enumerate(candidates):
                     try:
                         upd_time = time.perf_counter()
-                        result = await update_user_memory(redis_manager, cand, user_id, user_msg, bot_resp)
+                        result = await update_user_memory(redis_manager, cand, user_id, user_msg, bot_resp, bot_id)  # <-- Pass bot_id
                         upd_time = time.perf_counter() - upd_time
                         print(f"[MemoryWorker] {result} ({upd_time:.3f}s)")
                     except Exception as e:
